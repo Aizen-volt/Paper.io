@@ -27,7 +27,7 @@ class Renderer {
         };
     }
 
-    draw(gameState, camera, myNickname) {
+    draw(gameState, camera, myId) {
         const { ctx, canvas } = this;
 
         ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -47,7 +47,7 @@ class Renderer {
 
         ctx.restore();
 
-        this.updateUI(gameState, myNickname);
+        this.updateUI(gameState, myId);
     }
 
     drawTerritory(p) {
@@ -164,7 +164,7 @@ class Renderer {
         ctx.restore();
     }
 
-    updateUI(gameState, myNickname) {
+    updateUI(gameState, myId) {
         if (!this.ui.hud) return;
 
         this.ui.hud.style.display = 'block';
@@ -172,7 +172,7 @@ class Renderer {
 
         this.ui.playerCount.innerText = `Players: ${gameState.players.length}`;
 
-        const me = gameState.players.find(p => p.name === myNickname);
+        const me = gameState.players.find(p => p.id === myId);
         if (me) {
             this.ui.currentScore.innerText = `Score: ${Math.round(me.score)}`;
         }
@@ -200,6 +200,7 @@ class Game {
         this.myNickname = "";
         this.mouseX = 0;
         this.mouseY = 0;
+        this.myId = null;
 
         this.initEventListeners();
     }
@@ -245,7 +246,15 @@ class Game {
         };
 
         this.ws.onmessage = (e) => {
-            this.gameState = JSON.parse(e.data);
+            const data = JSON.parse(e.data);
+
+            if (data.type === "INIT") {
+                this.myId = data.playerId;
+                console.log("My assigned ID:", this.myId);
+                return;
+            }
+
+            this.gameState = data;
         };
 
         this.ws.onclose = (e) => {
@@ -267,7 +276,7 @@ class Game {
     }
 
     showGameOver() {
-        const me = this.gameState.players.find(p => p.name === this.myNickname);
+        const me = this.gameState.players.find(p => p.name === this.myId);
         document.getElementById('final-score').innerText = me ? Math.round(me.score) : 0;
         document.getElementById('game-over-screen').style.display = 'flex';
     }
@@ -275,9 +284,9 @@ class Game {
     render() {
         if (!this.isPlaying) return;
 
-        const me = this.gameState.players.find(p => p.name === this.myNickname);
+        const me = this.gameState.players.find(p => p.id === this.myId);
         this.camera.update(me, this.canvas);
-        this.renderer.draw(this.gameState, this.camera, this.myNickname);
+        this.renderer.draw(this.gameState, this.camera, this.myId);
 
         requestAnimationFrame(() => this.render());
     }

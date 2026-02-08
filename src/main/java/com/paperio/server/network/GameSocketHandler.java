@@ -2,6 +2,7 @@ package com.paperio.server.network;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.paperio.server.engine.GameEngine;
+import com.paperio.server.network.protocol.InitPacket;
 import com.paperio.server.network.protocol.InputPacket;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NonNull;
@@ -10,6 +11,8 @@ import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
+
+import java.io.IOException;
 import java.net.URI;
 
 @Slf4j
@@ -24,16 +27,21 @@ public class GameSocketHandler extends TextWebSocketHandler {
     }
 
     @Override
-    public void afterConnectionEstablished(@NonNull WebSocketSession session) {
+    public void afterConnectionEstablished(@NonNull WebSocketSession session) throws IOException {
         String playerName = extractNameFromSession(session);
         log.info("New connection: SessionID={} Name={}", session.getId(), playerName);
         gameEngine.joinGame(session, playerName);
+
+        var init = new InitPacket("INIT", session.getId());
+        session.sendMessage(new TextMessage(objectMapper.writeValueAsString(init)));
+
+        log.info("Player joined: {} with ID: {}", playerName, session.getId());
     }
 
     @Override
     protected void handleTextMessage(@NonNull WebSocketSession session, TextMessage message) throws Exception {
         var packet = objectMapper.readValue(message.getPayload(), InputPacket.class);
-        gameEngine.handleInput(session.getId(), packet.getX(), packet.getY());
+        gameEngine.handleInput(session.getId(), packet.x(), packet.y());
     }
 
     @Override
