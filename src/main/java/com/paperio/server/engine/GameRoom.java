@@ -33,6 +33,9 @@ public class GameRoom {
     private final ObjectMapper objectMapper;
     private final GeometryFactory geoFactory = new GeometryFactory();
 
+    @Getter
+    private final long createdAt = System.currentTimeMillis();
+
     private static final double VISIBILITY_RADIUS = 1200.0;
 
     private final Map<String, Player> players = new ConcurrentHashMap<>();

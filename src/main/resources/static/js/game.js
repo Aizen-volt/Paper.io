@@ -27,9 +27,8 @@ class Renderer {
         };
     }
 
-    draw(gameState, camera, myId) {
+    draw(gameState, camera, myId, isMenu = false) {
         const { ctx, canvas } = this;
-
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         ctx.save();
@@ -39,7 +38,6 @@ class Renderer {
 
         if (gameState.players) {
             const alivePlayers = gameState.players.filter(p => p.isAlive);
-
             alivePlayers.forEach(p => this.drawTerritory(p));
             alivePlayers.forEach(p => this.drawTrail(p));
             alivePlayers.forEach(p => this.drawHead(p));
@@ -47,12 +45,13 @@ class Renderer {
 
         ctx.restore();
 
-        this.updateUI(gameState, myId);
+        if (!isMenu) {
+            this.updateUI(gameState, myId);
+        }
     }
 
     drawTerritory(p) {
         if (!p.territory || p.territory.length === 0) return;
-
         const { ctx } = this;
         ctx.save();
         ctx.fillStyle = p.color;
@@ -60,12 +59,9 @@ class Renderer {
 
         p.territory.forEach(polygon => {
             if (polygon.length < 3) return;
-
             ctx.beginPath();
             ctx.moveTo(polygon[0][0], polygon[0][1]);
-            for (let i = 1; i < polygon.length; i++) {
-                ctx.lineTo(polygon[i][0], polygon[i][1]);
-            }
+            polygon.forEach(pt => ctx.lineTo(pt[0], pt[1]));
             ctx.closePath();
             ctx.fill();
         });
@@ -74,7 +70,6 @@ class Renderer {
 
     drawTrail(p) {
         if (!p.trail || p.trail.length < 2) return;
-
         const { ctx } = this;
         ctx.save();
         ctx.strokeStyle = p.color;
@@ -85,10 +80,7 @@ class Renderer {
 
         ctx.beginPath();
         ctx.moveTo(p.trail[0][0], p.trail[0][1]);
-        for (let i = 1; i < p.trail.length; i++) {
-            ctx.lineTo(p.trail[i][0], p.trail[i][1]);
-        }
-
+        p.trail.forEach(pt => ctx.lineTo(pt[0], pt[1]));
         ctx.lineTo(p.x, p.y);
         ctx.stroke();
         ctx.restore();
@@ -96,39 +88,29 @@ class Renderer {
 
     drawHead(p) {
         const { ctx } = this;
-
         ctx.save();
         ctx.translate(p.x, p.y);
-        ctx.rotate(p.angle);
-
+        ctx.rotate(p.angle || 0);
         ctx.fillStyle = p.color;
         ctx.shadowBlur = 10;
         ctx.shadowColor = "rgba(0,0,0,0.3)";
         ctx.fillRect(-15, -15, 30, 30);
-
         ctx.strokeStyle = "white";
         ctx.lineWidth = 2;
         ctx.strokeRect(-15, -15, 30, 30);
         ctx.restore();
 
-        this.drawNameplate(p.name, p.x, p.y - 35);
+        if (p.name) this.drawNameplate(p.name, p.x, p.y - 35);
     }
 
     drawNameplate(name, x, y) {
         const { ctx } = this;
         ctx.font = "bold 14px 'Segoe UI', Arial";
         const textWidth = ctx.measureText(name).width;
-        const padding = 8;
-
         ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
         ctx.beginPath();
-        const rectX = x - textWidth / 2 - padding;
-        const rectY = y - 12;
-        const rectW = textWidth + padding * 2;
-        const rectH = 20;
-        ctx.roundRect(rectX, rectY, rectW, rectH, 10);
+        ctx.roundRect(x - textWidth / 2 - 8, y - 12, textWidth + 16, 20, 10);
         ctx.fill();
-
         ctx.fillStyle = "white";
         ctx.textAlign = "center";
         ctx.fillText(name, x, y + 3);
@@ -137,39 +119,32 @@ class Renderer {
     drawGrid(camera) {
         const { ctx, canvas } = this;
         ctx.save();
-
         ctx.fillStyle = "#fafafa";
         ctx.fillRect(0, 0, this.MAP_SIZE, this.MAP_SIZE);
-
         ctx.strokeStyle = "rgba(0, 0, 0, 0.05)";
         ctx.lineWidth = 1;
 
         const startX = Math.floor(camera.x / this.GRID_SIZE) * this.GRID_SIZE;
         const startY = Math.floor(camera.y / this.GRID_SIZE) * this.GRID_SIZE;
-        const endX = startX + canvas.width + this.GRID_SIZE;
-        const endY = startY + canvas.height + this.GRID_SIZE;
 
         ctx.beginPath();
-        for (let x = startX; x <= endX; x += this.GRID_SIZE) {
-            if (x < 0 || x > this.MAP_SIZE) continue;
-            ctx.moveTo(x, Math.max(0, startY));
-            ctx.lineTo(x, Math.min(this.MAP_SIZE, endY));
+        for (let x = startX; x <= startX + canvas.width + this.GRID_SIZE; x += this.GRID_SIZE) {
+            if (x >= 0 && x <= this.MAP_SIZE) {
+                ctx.moveTo(x, 0); ctx.lineTo(x, this.MAP_SIZE);
+            }
         }
-        for (let y = startY; y <= endY; y += this.GRID_SIZE) {
-            if (y < 0 || y > this.MAP_SIZE) continue;
-            ctx.moveTo(Math.max(0, startX), y);
-            ctx.lineTo(Math.min(this.MAP_SIZE, endX), y);
+        for (let y = startY; y <= startY + canvas.height + this.GRID_SIZE; y += this.GRID_SIZE) {
+            if (y >= 0 && y <= this.MAP_SIZE) {
+                ctx.moveTo(0, y); ctx.lineTo(this.MAP_SIZE, y);
+            }
         }
         ctx.stroke();
         ctx.restore();
     }
 
     updateUI(gameState, myId) {
-        if (!this.ui.hud) return;
-
         this.ui.hud.style.display = 'block';
         this.ui.lb.style.display = 'block';
-
         this.ui.playerCount.innerText = `Players: ${gameState.players.length}`;
 
         const me = gameState.players.find(p => p.id === myId);
@@ -188,6 +163,52 @@ class Renderer {
     }
 }
 
+class MenuBot {
+    constructor(w, h) {
+        this.w = w; this.h = h;
+        this.reset();
+    }
+
+    reset() {
+        this.x = Math.random() * this.w;
+        this.y = Math.random() * this.h;
+        this.color = `hsl(${Math.random() * 360}, 70%, 60%)`;
+        this.angle = Math.random() * Math.PI * 2;
+        this.trail = [];
+        this.state = 'STRAIGHT';
+        this.timer = Math.random() * 100;
+        this.turnSpeed = 0;
+    }
+
+    update() {
+        this.timer--;
+        if (this.timer <= 0) {
+            if (this.state === 'STRAIGHT') {
+                this.state = 'ATTACK';
+                this.timer = 50 + Math.random() * 50;
+                this.turnSpeed = Math.random() > 0.5 ? 0.04 : -0.04;
+            } else {
+                this.state = 'STRAIGHT';
+                this.timer = 100 + Math.random() * 100;
+                this.turnSpeed = 0;
+                this.trail = [];
+            }
+        }
+
+        this.angle += this.turnSpeed;
+        this.x += Math.cos(this.angle) * 2.5;
+        this.y += Math.sin(this.angle) * 2.5;
+
+        if (this.x < 0 || this.x > this.w || this.y < 0 || this.y > this.h) {
+            this.angle += Math.PI / 2;
+        }
+
+        if (this.state === 'ATTACK' && this.timer % 5 === 0) {
+            this.trail.push([this.x, this.y]);
+        }
+    }
+}
+
 class Game {
     constructor() {
         this.canvas = document.getElementById('game-canvas');
@@ -197,12 +218,39 @@ class Game {
         this.ws = null;
         this.isPlaying = false;
         this.gameState = { players: [] };
-        this.myNickname = "";
-        this.mouseX = 0;
-        this.mouseY = 0;
         this.myId = null;
+        this.mouseX = 0; this.mouseY = 0;
+
+        this.menuBots = Array.from({length: 5}, () => new MenuBot(window.innerWidth, window.innerHeight));
 
         this.initEventListeners();
+        this.refreshStats();
+        setInterval(() => this.refreshStats(), 5000);
+        this.menuLoop();
+    }
+
+    async refreshStats() {
+        if (this.isPlaying) return;
+        try {
+            const res = await fetch('/api/stats');
+            const data = await res.json();
+            document.getElementById('stat-players').innerText = data.players;
+            document.getElementById('stat-rooms').innerText = data.rooms;
+        } catch (e) { /* silent fail */ }
+    }
+
+    menuLoop() {
+        if (this.isPlaying) return;
+
+        this.renderer.draw({ players: [] }, { x: 0, y: 0 }, null, true);
+
+        this.menuBots.forEach(bot => {
+            bot.update();
+            this.renderer.drawTrail(bot);
+            this.renderer.drawHead(bot);
+        });
+
+        requestAnimationFrame(() => this.menuLoop());
     }
 
     initEventListeners() {
@@ -211,8 +259,7 @@ class Game {
 
         document.getElementById('play-button').addEventListener('click', () => this.start());
         document.getElementById('restart-button').addEventListener('click', () => {
-            document.getElementById('game-over-screen').style.display = 'none';
-            document.getElementById('login-screen').style.display = 'flex';
+            location.reload();
         });
 
         window.addEventListener('mousemove', (e) => {
@@ -228,33 +275,28 @@ class Game {
 
     start() {
         const nick = document.getElementById('nickname-input').value.trim();
-        if (!nick) return alert("Please enter a nickname");
-
-        this.myNickname = nick;
-        this.connect();
+        if (!nick) return alert("Nickname required");
+        this.connect(nick);
     }
 
-    connect() {
+    connect(nick) {
         const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        this.ws = new WebSocket(`${protocol}//${location.host}/game?name=${encodeURIComponent(this.myNickname)}`);
+        this.ws = new WebSocket(`${protocol}//${location.host}/game?name=${encodeURIComponent(nick)}`);
 
         this.ws.onopen = () => {
             this.isPlaying = true;
             document.getElementById('login-screen').style.display = 'none';
             this.startInputLoop();
-            this.render();
+            this.gameLoop();
         };
 
         this.ws.onmessage = (e) => {
             const data = JSON.parse(e.data);
-
             if (data.type === "INIT") {
                 this.myId = data.playerId;
-                console.log("My assigned ID:", this.myId);
-                return;
+            } else {
+                this.gameState = data;
             }
-
-            this.gameState = data;
         };
 
         this.ws.onclose = (e) => {
@@ -266,7 +308,7 @@ class Game {
 
     startInputLoop() {
         setInterval(() => {
-            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            if (this.ws?.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({
                     x: this.mouseX + this.camera.x,
                     y: this.mouseY + this.camera.y
@@ -275,20 +317,18 @@ class Game {
         }, 50);
     }
 
-    showGameOver() {
-        const me = this.gameState.players.find(p => p.name === this.myId);
-        document.getElementById('final-score').innerText = me ? Math.round(me.score) : 0;
-        document.getElementById('game-over-screen').style.display = 'flex';
-    }
-
-    render() {
+    gameLoop() {
         if (!this.isPlaying) return;
-
         const me = this.gameState.players.find(p => p.id === this.myId);
         this.camera.update(me, this.canvas);
         this.renderer.draw(this.gameState, this.camera, this.myId);
+        requestAnimationFrame(() => this.gameLoop());
+    }
 
-        requestAnimationFrame(() => this.render());
+    showGameOver() {
+        const me = this.gameState.players.find(p => p.id === this.myId);
+        document.getElementById('final-score').innerText = me ? Math.round(me.score) : "0";
+        document.getElementById('game-over-screen').style.display = 'flex';
     }
 }
 

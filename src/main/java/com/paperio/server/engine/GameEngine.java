@@ -10,10 +10,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.socket.WebSocketSession;
+
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 @RequiredArgsConstructor
@@ -21,13 +22,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class GameEngine {
     private final Map<String, GameRoom> rooms = new ConcurrentHashMap<>();
     private final Map<String, String> sessionRoomMap = new ConcurrentHashMap<>();
-    private final AtomicInteger roomCounter = new AtomicInteger(1);
 
     private final GameProperties props;
     private final GeometryService geoService;
     private final PhysicsProcessor physicsProcessor;
     private final CollisionProcessor collisionProcessor;
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    private static final long ROOM_GRACE_PERIOD_MS = 5_000;
 
     @PostConstruct
     public void wakeUpCommonPool() {
@@ -54,10 +56,11 @@ public class GameEngine {
     }
 
     private GameRoom createRoom() {
-        var id = "room-" + roomCounter.getAndIncrement();
+        String id = UUID.randomUUID().toString();
         var room = new GameRoom(id, props.map(), physicsProcessor, collisionProcessor, objectMapper);
+
         rooms.put(id, room);
-        log.info("New room created: {}", id);
+        log.info("New room created with UUID: {}", id);
         return room;
     }
 
@@ -65,12 +68,18 @@ public class GameEngine {
     public void serverTick() {
         rooms.values().parallelStream().forEach(GameRoom::tick);
 
+        long now = System.currentTimeMillis();
+
         rooms.entrySet().removeIf(entry -> {
-            boolean isEmpty = entry.getValue().getPlayerCount() == 0;
-            if (isEmpty) {
-                log.info("Room Pruning: Closing empty room {}", entry.getKey());
+            GameRoom room = entry.getValue();
+            boolean isEmpty = room.getPlayerCount() == 0;
+            boolean isOldEnough = (now - room.getCreatedAt()) > ROOM_GRACE_PERIOD_MS;
+
+            if (isEmpty && isOldEnough) {
+                log.info("Room Pruning: Closing inactive room {}", entry.getKey());
+                return true;
             }
-            return isEmpty;
+            return false;
         });
     }
 
@@ -82,7 +91,7 @@ public class GameEngine {
                 room.removePlayer(id);
                 if (room.getPlayerCount() == 0) {
                     rooms.remove(roomId);
-                    log.info("Room {} closed immediately after last player left", roomId);
+                    log.info("Room {} purged from engine", roomId);
                 }
             }
         }
@@ -94,5 +103,13 @@ public class GameEngine {
             var room = rooms.get(roomId);
             if (room != null) room.handleInput(id, x, y);
         }
+    }
+
+    public Integer getTotalPlayerCount() {
+        return rooms.values().stream().mapToInt(GameRoom::getPlayerCount).sum();
+    }
+
+    public Integer getRoomCount() {
+        return rooms.size();
     }
 }
