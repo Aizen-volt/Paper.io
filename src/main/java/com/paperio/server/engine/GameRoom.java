@@ -29,7 +29,9 @@ public class GameRoom {
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
 
     public void addPlayer(WebSocketSession session, Player player) {
-        sessions.put(session.getId(), session);
+        if (session != null) {
+            sessions.put(session.getId(), session);
+        }
         players.put(player.getId(), player);
     }
 

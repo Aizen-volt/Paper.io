@@ -4,16 +4,20 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.paperio.server.config.GameProperties;
 import com.paperio.server.model.Player;
 import com.paperio.server.service.GeometryService;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.socket.WebSocketSession;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class GameEngine {
     private final Map<String, GameRoom> rooms = new ConcurrentHashMap<>();
     private final Map<String, String> sessionRoomMap = new ConcurrentHashMap<>();
@@ -24,6 +28,11 @@ public class GameEngine {
     private final PhysicsProcessor physicsProcessor;
     private final CollisionProcessor collisionProcessor;
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @PostConstruct
+    public void wakeUpCommonPool() {
+        ForkJoinPool.commonPool().submit(() -> log.info("Common pool warmed up")).join();
+    }
 
     public void joinGame(WebSocketSession session, String playerName) {
         var room = findBestRoom();

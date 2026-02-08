@@ -1,5 +1,6 @@
 package com.paperio.server.service;
 
+import jakarta.annotation.PostConstruct;
 import org.locationtech.jts.geom.*;
 import org.locationtech.jts.simplify.TopologyPreservingSimplifier;
 import org.springframework.stereotype.Service;
@@ -9,6 +10,21 @@ import java.util.List;
 @Service
 public class GeometryService {
     private final GeometryFactory factory = new GeometryFactory();
+
+    @PostConstruct
+    public void warmUp() {
+        Geometry circle = createInitialCircle(0, 0, 50);
+        Geometry square = factory.createPolygon(new Coordinate[]{
+                new Coordinate(0,0), new Coordinate(10,0),
+                new Coordinate(10,10), new Coordinate(0,10), new Coordinate(0,0)
+        });
+
+        for (int i = 0; i < 500; i++) {
+            circle.union(square);
+            circle.difference(square);
+            TopologyPreservingSimplifier.simplify(circle, 1.0);
+        }
+    }
 
     public Geometry createInitialCircle(double x, double y, double radius) {
         return factory.createPoint(new Coordinate(x, y)).buffer(radius);
