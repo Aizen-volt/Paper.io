@@ -47,26 +47,52 @@ public class GameEngine {
     }
 
     private GameRoom findBestRoom() {
-        return rooms.values().stream().filter(r -> r.getPlayerCount() < 20).findFirst().orElseGet(this::createRoom);
+        return rooms.values().stream()
+                .filter(r -> r.getPlayerCount() < 20)
+                .findFirst()
+                .orElseGet(this::createRoom);
     }
 
     private GameRoom createRoom() {
         var id = "room-" + roomCounter.getAndIncrement();
         var room = new GameRoom(id, props.map(), physicsProcessor, collisionProcessor, objectMapper);
         rooms.put(id, room);
+        log.info("New room created: {}", id);
         return room;
     }
 
     @Scheduled(fixedRate = 16)
-    public void serverTick() { rooms.values().parallelStream().forEach(GameRoom::tick); }
+    public void serverTick() {
+        rooms.values().parallelStream().forEach(GameRoom::tick);
+
+        rooms.entrySet().removeIf(entry -> {
+            boolean isEmpty = entry.getValue().getPlayerCount() == 0;
+            if (isEmpty) {
+                log.info("Room Pruning: Closing empty room {}", entry.getKey());
+            }
+            return isEmpty;
+        });
+    }
 
     public void leaveGame(String id) {
         var roomId = sessionRoomMap.remove(id);
-        if (roomId != null) rooms.get(roomId).removePlayer(id);
+        if (roomId != null) {
+            var room = rooms.get(roomId);
+            if (room != null) {
+                room.removePlayer(id);
+                if (room.getPlayerCount() == 0) {
+                    rooms.remove(roomId);
+                    log.info("Room {} closed immediately after last player left", roomId);
+                }
+            }
+        }
     }
 
     public void handleInput(String id, double x, double y) {
         var roomId = sessionRoomMap.get(id);
-        if (roomId != null) rooms.get(roomId).handleInput(id, x, y);
+        if (roomId != null) {
+            var room = rooms.get(roomId);
+            if (room != null) room.handleInput(id, x, y);
+        }
     }
 }
