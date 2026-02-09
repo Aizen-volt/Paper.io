@@ -145,7 +145,9 @@ class Renderer {
     updateUI(gameState, myId) {
         this.ui.hud.style.display = 'block';
         this.ui.lb.style.display = 'block';
-        this.ui.playerCount.innerText = `Players: ${gameState.players.length}`;
+
+        const count = (gameState.allPlayers !== undefined) ? gameState.allPlayers : gameState.players.length;
+        this.ui.playerCount.innerText = `Players: ${count}`;
 
         const me = gameState.players.find(p => p.id === myId);
         if (me) {
@@ -217,7 +219,7 @@ class Game {
         this.camera = new Camera();
         this.ws = null;
         this.isPlaying = false;
-        this.gameState = { players: [] };
+        this.gameState = { players: [], allPlayers: 0 };
         this.myId = null;
         this.mouseX = 0; this.mouseY = 0;
 
@@ -295,7 +297,15 @@ class Game {
             if (data.type === "INIT") {
                 this.myId = data.playerId;
             } else {
-                this.gameState = data;
+                console.log(data);
+
+                const playersList = data.visiblePlayers || data.players || [];
+                this.gameState = {
+                    players: playersList,
+                    allPlayers: data.allPlayers || playersList.length,
+                    leaderboard: data.leaderboard || [],
+                    timestamp: data.timestamp
+                };
             }
         };
 
@@ -319,8 +329,18 @@ class Game {
 
     gameLoop() {
         if (!this.isPlaying) return;
+
+        if (!this.gameState.players) {
+            requestAnimationFrame(() => this.gameLoop());
+            return;
+        }
+
         const me = this.gameState.players.find(p => p.id === this.myId);
-        this.camera.update(me, this.canvas);
+
+        if (me) {
+            this.camera.update(me, this.canvas);
+        }
+
         this.renderer.draw(this.gameState, this.camera, this.myId);
         requestAnimationFrame(() => this.gameLoop());
     }

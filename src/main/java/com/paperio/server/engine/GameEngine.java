@@ -83,6 +83,17 @@ public class GameEngine {
         });
     }
 
+    @Scheduled(fixedRate = 5000)
+    public void manageBotPopulation() {
+        rooms.values().forEach(room -> {
+            try {
+                room.maintainPopulation(geoService, props.physics());
+            } catch (Exception e) {
+                log.error("Error maintaining population in room {}", room.getRoomId(), e);
+            }
+        });
+    }
+
     public void leaveGame(String id) {
         var roomId = sessionRoomMap.remove(id);
         if (roomId != null) {

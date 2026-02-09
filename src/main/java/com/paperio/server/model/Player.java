@@ -1,6 +1,7 @@
 package com.paperio.server.model;
 
 import com.paperio.server.config.GameProperties;
+import com.paperio.server.engine.BotController;
 import com.paperio.server.util.ColorGenerator;
 import lombok.Getter;
 import lombok.Setter;
@@ -27,6 +28,12 @@ public class Player {
 
     private Geometry territory;
     private final List<Coordinate> trailPoints = new ArrayList<>();
+
+    @Setter @Getter
+    private boolean isBot = false;
+
+    @Setter @Getter
+    private BotController botController;
 
     public Player(String id, String name, double startX, double startY,
                   GameProperties.PhysicsConfig physics, Geometry initialTerritory) {

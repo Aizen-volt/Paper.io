@@ -6,6 +6,7 @@ import com.paperio.server.model.Player;
 import com.paperio.server.network.protocol.LeaderboardEntryDTO;
 import com.paperio.server.network.protocol.PlayerDTO;
 import com.paperio.server.network.protocol.WorldStateDTO;
+import com.paperio.server.service.GeometryService;
 import com.paperio.server.util.PlayerMapper;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -20,7 +21,9 @@ import org.springframework.web.socket.WebSocketSession;
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -37,9 +40,12 @@ public class GameRoom {
     private final long createdAt = System.currentTimeMillis();
 
     private static final double VISIBILITY_RADIUS = 1200.0;
+    private static final int TARGET_BOT_COUNT = 15;
 
     private final Map<String, Player> players = new ConcurrentHashMap<>();
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
+    private final List<BotController> botControllers = new CopyOnWriteArrayList<>();
+
 
     public void addPlayer(WebSocketSession session, Player player) {
         if (session != null) {
@@ -68,6 +74,8 @@ public class GameRoom {
     public void tick() {
         if (players.isEmpty()) return;
 
+        botControllers.forEach(BotController::tick);
+
         players.values().stream()
                 .filter(Player::isAlive)
                 .forEach(p -> physicsProcessor.movePlayer(p, mapConfig));
@@ -76,7 +84,7 @@ public class GameRoom {
 
         players.values().removeIf(p -> {
             if (!p.isAlive()) {
-                closeSession(p);
+                handleDeath(p);
                 return true;
             }
             return false;
@@ -85,12 +93,46 @@ public class GameRoom {
         broadcast();
     }
 
+    private void handleDeath(Player p) {
+        if (p.isBot()) {
+            botControllers.remove(p.getBotController());
+        } else {
+            closeSession(p);
+        }
+    }
+
     private void closeSession(Player p) {
         var session = sessions.remove(p.getId());
         if (session != null && session.isOpen()) {
             try { session.close(new CloseStatus(4000, "DEATH")); }
             catch (Exception ignored) {}
         }
+    }
+
+    public void maintainPopulation(GeometryService geoService, GameProperties.PhysicsConfig physics) {
+        int currentCount = players.size();
+
+        if (currentCount < TARGET_BOT_COUNT) {
+            spawnBot(geoService, physics);
+        }
+    }
+
+    private void spawnBot(GeometryService geoService, GameProperties.PhysicsConfig physics) {
+        String botId = UUID.randomUUID().toString();
+        String botName = "Bot-" + botId.substring(0, 4);
+
+        double startX = Math.random() * mapConfig.width();
+        double startY = Math.random() * mapConfig.height();
+
+        var initialTerritory = geoService.createInitialCircle(startX, startY, physics.startRadius());
+        var bot = new Player(botId, botName, startX, startY, physics, initialTerritory);
+        bot.setBot(true);
+
+        var controller = new BotController(bot, mapConfig.width(), mapConfig.height());
+        bot.setBotController(controller);
+        botControllers.add(controller);
+
+        this.addPlayer(null, bot);
     }
 
     private void broadcast() {
@@ -110,12 +152,14 @@ public class GameRoom {
             Player me = players.get(sessionId);
             if (me == null) return;
 
+            int allPlayers = players.size();
+
             List<PlayerDTO> visiblePlayers = players.values().stream()
                     .filter(other -> isVisible(me, other))
                     .map(other -> allPlayerDTOs.get(other.getId()))
                     .toList();
 
-            WorldStateDTO state = new WorldStateDTO(System.currentTimeMillis(), visiblePlayers, leaderboard);
+            WorldStateDTO state = new WorldStateDTO(System.currentTimeMillis(), allPlayers, visiblePlayers, leaderboard);
 
             try {
                 session.sendMessage(new TextMessage(objectMapper.writeValueAsString(state)));

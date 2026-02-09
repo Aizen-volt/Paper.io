@@ -4,6 +4,7 @@ import java.util.List;
 
 public record WorldStateDTO(
         long timestamp,
-        List<PlayerDTO> players,
+        int allPlayers,
+        List<PlayerDTO> visiblePlayers,
         List<LeaderboardEntryDTO> leaderboard
 ) {}
