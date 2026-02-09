@@ -6,10 +6,8 @@ import com.paperio.server.model.Player;
 import com.paperio.server.network.protocol.LeaderboardEntryDTO;
 import com.paperio.server.network.protocol.PlayerDTO;
 import com.paperio.server.network.protocol.WorldStateDTO;
-import com.paperio.server.service.GeometryService;
 import com.paperio.server.util.PlayerMapper;
 import lombok.Getter;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Envelope;
@@ -21,36 +19,47 @@ import org.springframework.web.socket.WebSocketSession;
 
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 @Slf4j
-@RequiredArgsConstructor
 public class GameRoom {
     @Getter private final String roomId;
-    private final GameProperties.MapConfig mapConfig;
+    private final GameProperties props;
     private final PhysicsProcessor physicsProcessor;
     private final CollisionProcessor collisionProcessor;
     private final ObjectMapper objectMapper;
+    private final EntityFactory entityFactory;
+
+    private final SpatialGrid spatialGrid;
     private final GeometryFactory geoFactory = new GeometryFactory();
+
+    private final Lock tickLock = new ReentrantLock();
 
     @Getter
     private final long createdAt = System.currentTimeMillis();
-
-    private static final double VISIBILITY_RADIUS = 1200.0;
-    private static final int TARGET_BOT_COUNT = 15;
 
     private final Map<String, Player> players = new ConcurrentHashMap<>();
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
     private final List<BotController> botControllers = new CopyOnWriteArrayList<>();
 
+    public GameRoom(String roomId, GameProperties props, EntityFactory entityFactory,
+                    PhysicsProcessor physicsProcessor, CollisionProcessor collisionProcessor,
+                    ObjectMapper objectMapper) {
+        this.roomId = roomId;
+        this.props = props;
+        this.entityFactory = entityFactory;
+        this.physicsProcessor = physicsProcessor;
+        this.collisionProcessor = collisionProcessor;
+        this.objectMapper = objectMapper;
+        this.spatialGrid = new SpatialGrid(props.map().width(), props.map().height(), props.map().gridCellSize());
+    }
 
     public void addPlayer(WebSocketSession session, Player player) {
-        if (session != null) {
-            sessions.put(session.getId(), session);
-        }
+        if (session != null) sessions.put(session.getId(), session);
         players.put(player.getId(), player);
     }
 
@@ -72,25 +81,42 @@ public class GameRoom {
     }
 
     public void tick() {
-        if (players.isEmpty()) return;
+        if (!tickLock.tryLock()) {
+            return;
+        }
 
-        botControllers.forEach(BotController::tick);
+        try {
+            if (players.isEmpty()) return;
 
-        players.values().stream()
-                .filter(Player::isAlive)
-                .forEach(p -> physicsProcessor.movePlayer(p, mapConfig));
+            botControllers.forEach(BotController::tick);
 
-        collisionProcessor.processCollisions(players.values());
-
-        players.values().removeIf(p -> {
-            if (!p.isAlive()) {
-                handleDeath(p);
-                return true;
+            for (Player p : players.values()) {
+                if (p.isAlive()) {
+                    physicsProcessor.movePlayer(p, props.map(), players.values());
+                }
             }
-            return false;
-        });
 
-        broadcast();
+            spatialGrid.clear();
+            for (Player p : players.values()) {
+                if (p.isAlive()) {
+                    spatialGrid.insert(p);
+                }
+            }
+
+            collisionProcessor.processCollisions(spatialGrid, players.values());
+
+            players.values().removeIf(p -> {
+                if (!p.isAlive()) {
+                    handleDeath(p);
+                    return true;
+                }
+                return false;
+            });
+
+            broadcast();
+        } finally {
+            tickLock.unlock();
+        }
     }
 
     private void handleDeath(Player p) {
@@ -109,30 +135,19 @@ public class GameRoom {
         }
     }
 
-    public void maintainPopulation(GeometryService geoService, GameProperties.PhysicsConfig physics) {
-        int currentCount = players.size();
-
-        if (currentCount < TARGET_BOT_COUNT) {
-            spawnBot(geoService, physics);
+    public void maintainPopulation() {
+        if (tickLock.tryLock()) {
+            try {
+                int currentCount = players.size();
+                if (currentCount < props.room().botTarget() && currentCount < props.room().maxPlayers()) {
+                    Player bot = entityFactory.createBot();
+                    botControllers.add(bot.getBotController());
+                    this.addPlayer(null, bot);
+                }
+            } finally {
+                tickLock.unlock();
+            }
         }
-    }
-
-    private void spawnBot(GeometryService geoService, GameProperties.PhysicsConfig physics) {
-        String botId = UUID.randomUUID().toString();
-        String botName = "Bot-" + botId.substring(0, 4);
-
-        double startX = Math.random() * mapConfig.width();
-        double startY = Math.random() * mapConfig.height();
-
-        var initialTerritory = geoService.createInitialCircle(startX, startY, physics.startRadius());
-        var bot = new Player(botId, botName, startX, startY, physics, initialTerritory);
-        bot.setBot(true);
-
-        var controller = new BotController(bot, mapConfig.width(), mapConfig.height());
-        bot.setBotController(controller);
-        botControllers.add(controller);
-
-        this.addPlayer(null, bot);
     }
 
     private void broadcast() {
@@ -146,42 +161,37 @@ public class GameRoom {
                 .map(p -> new LeaderboardEntryDTO(p.getName(), p.getScore(), p.getColor()))
                 .toList();
 
+        int allPlayersCount = players.size();
+
         sessions.forEach((sessionId, session) -> {
             if (!session.isOpen()) return;
 
             Player me = players.get(sessionId);
             if (me == null) return;
 
-            int allPlayers = players.size();
-
             List<PlayerDTO> visiblePlayers = players.values().stream()
                     .filter(other -> isVisible(me, other))
                     .map(other -> allPlayerDTOs.get(other.getId()))
                     .toList();
 
-            WorldStateDTO state = new WorldStateDTO(System.currentTimeMillis(), allPlayers, visiblePlayers, leaderboard);
+            WorldStateDTO state = new WorldStateDTO(System.currentTimeMillis(), allPlayersCount, visiblePlayers, leaderboard);
 
             try {
                 session.sendMessage(new TextMessage(objectMapper.writeValueAsString(state)));
             } catch (Exception e) {
-                log.error("Failed to send AOI update to {}", me.getName());
+                log.debug("Failed to send AOI update to {}", me.getName());
             }
         });
     }
 
     private boolean isVisible(Player observer, Player target) {
         if (observer.getId().equals(target.getId())) return true;
-
-        double r = VISIBILITY_RADIUS;
+        double r = props.room().visibilityRadius();
         Envelope visionEnvelope = new Envelope(
                 observer.getX() - r, observer.getX() + r,
                 observer.getY() - r, observer.getY() + r
         );
-
-        if (target.getTerritory().getEnvelopeInternal().intersects(visionEnvelope)) {
-            return true;
-        }
-
+        if (target.getTerritory().getEnvelopeInternal().intersects(visionEnvelope)) return true;
         Point head = geoFactory.createPoint(new Coordinate(target.getX(), target.getY()));
         return visionEnvelope.intersects(head.getCoordinate());
     }

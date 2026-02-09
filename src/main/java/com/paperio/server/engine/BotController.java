@@ -1,5 +1,6 @@
 package com.paperio.server.engine;
 
+import com.paperio.server.config.GameProperties;
 import com.paperio.server.model.Player;
 import lombok.RequiredArgsConstructor;
 import org.locationtech.jts.geom.Coordinate;
@@ -11,27 +12,19 @@ import java.util.Random;
 @RequiredArgsConstructor
 public class BotController {
     private final Player player;
-    private final int mapWidth;
-    private final int mapHeight;
+    private final GameProperties.MapConfig mapConfig;
+    private final GameProperties.BotConfig botConfig;
     private final Random random = new Random();
-
-    private static final int MAX_TRAIL_LENGTH = 100;
-    private static final double LOOKAHEAD_DIST = 40.0;
 
     private BotState state = BotState.ROAMING;
     private int stateTimer = 0;
 
-    private enum BotState {
-        ROAMING,
-        EXPANDING,
-        RETURNING,
-        EVADING
-    }
+    private enum BotState { ROAMING, EXPANDING, RETURNING, EVADING }
 
     public void tick() {
         if (checkImmediateDanger()) {
             state = BotState.EVADING;
-            stateTimer = 10;
+            stateTimer = botConfig.reactionTimeFrames();
         }
 
         switch (state) {
@@ -54,7 +47,7 @@ public class BotController {
     }
 
     private void handleExpansion() {
-        if (player.getTrailPoints().size() > MAX_TRAIL_LENGTH) {
+        if (player.getTrailPoints().size() > botConfig.maxTrailLength()) {
             state = BotState.RETURNING;
             return;
         }
@@ -69,7 +62,6 @@ public class BotController {
 
     private void handleReturn() {
         Point center = player.getTerritory().getCentroid();
-
         player.setTargetX(center.getX());
         player.setTargetY(center.getY());
 
@@ -86,10 +78,11 @@ public class BotController {
     }
 
     private boolean checkImmediateDanger() {
-        double lookX = player.getX() + Math.cos(player.getAngle()) * LOOKAHEAD_DIST;
-        double lookY = player.getY() + Math.sin(player.getAngle()) * LOOKAHEAD_DIST;
+        double dist = botConfig.lookaheadDist();
+        double lookX = player.getX() + Math.cos(player.getAngle()) * dist;
+        double lookY = player.getY() + Math.sin(player.getAngle()) * dist;
 
-        if (lookX < 0 || lookX > mapWidth || lookY < 0 || lookY > mapHeight) {
+        if (lookX < 0 || lookX > mapConfig.width() || lookY < 0 || lookY > mapConfig.height()) {
             avoidWall(lookX, lookY);
             return true;
         }
@@ -97,29 +90,24 @@ public class BotController {
         List<Coordinate> trail = player.getTrailPoints();
         if (trail.size() > 10) {
             for (int i = 0; i < trail.size() - 5; i++) {
-                Coordinate c = trail.get(i);
-                if (c.distance(new Coordinate(lookX, lookY)) < 15.0) {
+                if (trail.get(i).distance(new Coordinate(lookX, lookY)) < 15.0) {
                     setTargetInDirection(player.getAngle() + Math.PI / 2, 200);
                     return true;
                 }
             }
         }
-
         return false;
     }
 
     private void avoidWall(double lookX, double lookY) {
         double angle = player.getAngle();
-        if (lookX < 0 || lookX > mapWidth) angle = Math.PI - angle;
-        if (lookY < 0 || lookY > mapHeight) angle = -angle;
-
+        if (lookX < 0 || lookX > mapConfig.width()) angle = Math.PI - angle;
+        if (lookY < 0 || lookY > mapConfig.height()) angle = -angle;
         setTargetInDirection(angle, 300);
     }
 
     private void setTargetInDirection(double angle, double dist) {
-        double tx = player.getX() + Math.cos(angle) * dist;
-        double ty = player.getY() + Math.sin(angle) * dist;
-        player.setTargetX(tx);
-        player.setTargetY(ty);
+        player.setTargetX(player.getX() + Math.cos(angle) * dist);
+        player.setTargetY(player.getY() + Math.sin(angle) * dist);
     }
 }
